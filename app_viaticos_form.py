@@ -164,9 +164,7 @@ def conectar_sheets():
                     "https://www.googleapis.com/auth/spreadsheets",
                 ]
             )
-            client = gspread.Client(auth=creds)
-            client.login()
-            return client
+            return gspread.authorize(creds)
     except Exception as e:
         st.warning(f"⚠️ Modo nube falló: {e}")
 
