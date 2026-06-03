@@ -218,6 +218,11 @@ def ya_liquidado(hoja, serie, correlativo):
     return False, ""
 
 def siguiente_gsf(hoja):
+    """
+    Genera correlativo GSF unico.
+    Busca el maximo existente en Google Sheets y suma 1.
+    Agrega sufijo de timestamp para evitar colisiones simultaneas.
+    """
     try:
         registros = hoja.get_all_records()
         nums = []
@@ -225,13 +230,18 @@ def siguiente_gsf(hoja):
             ci = str(r.get("Correlativo_Interno",""))
             if ci.startswith("GSF-"):
                 try:
-                    nums.append(int(ci.split("-")[1]))
+                    # Tomar solo la parte numerica (primeros digitos despues de GSF-)
+                    parte = ci.split("-")[1]
+                    nums.append(int(''.join(filter(str.isdigit, parte))))
                 except:
                     pass
         siguiente = max(nums) + 1 if nums else 1
-        return f"GSF-{siguiente:03d}"
+        # Sufijo de minuto actual para evitar colisiones
+        sufijo = datetime.now().strftime("%H%M")
+        return f"GSF-{siguiente:03d}-{sufijo}"
     except:
-        return "GSF-001"
+        sufijo = datetime.now().strftime("%H%M")
+        return f"GSF-001-{sufijo}"
 
 # ─────────────────────────────────────────────────────
 # PARSEAR XMLs
@@ -839,6 +849,38 @@ def generar_reporte_pdf(correo, semana, registros, total_gral, totales_col):
     pdf.set_draw_color(31, 78, 121)
     pdf.rect(x0+w_lbl, y_cur, w_val, 7)
     y_cur += 12
+
+    # Observaciones / Comentarios
+    rect_fill(x0, y_cur, W, 7, AZUL_MED)
+    txt(x0, y_cur, W, 7, "OBSERVACIONES / COMENTARIOS",
+        bold=True, color=BLANCO, align="C")
+    y_cur += 7
+
+    # Gastos sin factura como observaciones
+    obs_pdf = []
+    for r in registros:
+        if str(r.get("TieneFact","Sí")) == "No":
+            ci   = r.get("Correlativo_Interno","")
+            cat  = r.get("ClasificacionGasto","")
+            desc = r.get("DescripcionCorta","")
+            mto  = float(r.get("MontoTotal",0) or 0)
+            fec  = r.get("Fecha","")
+            obs_pdf.append(f"{fec} | {ci} | {cat} | {desc} | Q{mto:,.2f}")
+
+    if obs_pdf:
+        for obs in obs_pdf:
+            if y_cur > 185:
+                pdf.add_page(); y_cur = 15
+            rect_fill(x0, y_cur, W, 6, (245,245,245))
+            txt(x0+2, y_cur, W-4, 6, f"• {obs[:100]}", size=8)
+            y_cur += 6
+    else:
+        # Espacio en blanco para escribir
+        for _ in range(3):
+            pdf.set_draw_color(180,180,180)
+            pdf.line(x0, y_cur+6, x0+W, y_cur+6)
+            y_cur += 8
+    y_cur += 6
 
     # Firmas
     fw = W / 3 - 5
