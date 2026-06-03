@@ -235,13 +235,9 @@ def siguiente_gsf(hoja):
                     nums.append(int(''.join(filter(str.isdigit, parte))))
                 except:
                     pass
-        siguiente = max(nums) + 1 if nums else 1
-        # Sufijo de minuto actual para evitar colisiones
-        sufijo = datetime.now().strftime("%H%M")
-        return f"GSF-{siguiente:03d}-{sufijo}"
+        return f"GSF-{(max(nums)+1 if nums else 1):03d}"
     except:
-        sufijo = datetime.now().strftime("%H%M")
-        return f"GSF-001-{sufijo}"
+        return "GSF-001"
 
 # ─────────────────────────────────────────────────────
 # PARSEAR XMLs
@@ -650,7 +646,7 @@ def generar_reporte_excel(correo, semana, registros):
     ws.row_dimensions[fila_det].height = 22
 
     # Encabezados detalle
-    cols_det = ["#","Fecha","Referencia","Nombre Emisor","Tipo de Gasto","Monto (Q)"]
+    cols_det = ["#","Fecha","Referencia","Descripcion del Gasto","Tipo de Gasto","Monto (Q)"]
     anchos_det = [4, 12, 24, 38, 20, 12]
     fila_det_hdr = fila_det + 1
     for ci, (h, aw) in enumerate(zip(cols_det, anchos_det), 1):
@@ -667,7 +663,8 @@ def generar_reporte_excel(correo, semana, registros):
         fila_di  = fila_det_hdr + di
         fecha_d  = r.get("Fecha","")
         nit_d    = r.get("NIT","") or r.get("Nit","")
-        emisor_d = r.get("NombreEmisor","") or r.get("DescripcionCorta","Sin factura")
+        desc_d = str(r.get("DescripcionCorta","") or "").strip()
+        emisor_d = desc_d if desc_d else r.get("NombreEmisor","Sin descripcion")
         tipo_d   = r.get("ClasificacionGasto","")
         monto_d  = float(r.get("MontoTotal",0) or 0)
         fact_d   = r.get("TieneFact","Sí")
@@ -902,7 +899,7 @@ def generar_reporte_pdf(correo, semana, registros, total_gral, totales_col):
 
     # Encabezados detalle
     dw = [8, 22, 55, 75, 45, 25, 47]
-    dh_cols = ["#","Fecha","Referencia","Nombre Emisor","Tipo Gasto","Monto","Factura"]
+    dh_cols = ["#","Fecha","Referencia","Descripcion del Gasto","Tipo Gasto","Monto","Factura"]
     rect_fill(x0, y_cur, sum(dw), 7, AZUL_MED)
     xi = x0
     for h, w in zip(dh_cols, dw):
@@ -920,7 +917,8 @@ def generar_reporte_pdf(correo, semana, registros, total_gral, totales_col):
         fact_d   = r.get("TieneFact","Sí")
         corr_d   = r.get("Correlativo_Interno","") or r.get("Referencia","")
         ref_d    = corr_d if fact_d=="No" else r.get("Referencia","")
-        emisor_d = (r.get("NombreEmisor","") or r.get("DescripcionCorta",""))[:40]
+        desc_d2 = str(r.get("DescripcionCorta","") or "").strip()
+        emisor_d = (desc_d2 if desc_d2 else r.get("NombreEmisor",""))[:40]
         tipo_d   = r.get("ClasificacionGasto","")
         monto_d  = float(r.get("MontoTotal",0) or 0)
         bg_d     = GRIS if di%2==0 else BLANCO
