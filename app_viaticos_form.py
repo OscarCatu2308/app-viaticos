@@ -139,8 +139,44 @@ CSS = """
 # ─────────────────────────────────────────────────────
 @st.cache_resource
 def conectar_sheets():
+    # ── Modo nube: st.secrets ─────────────────────────
     try:
-        return gspread.service_account(filename=CREDENTIALS_FILE)
+        secrets = st.secrets.get("gcp_service_account", None)
+        if secrets is not None:
+            creds_dict = {
+                "type"                        : secrets.get("type","service_account"),
+                "project_id"                  : secrets.get("project_id",""),
+                "private_key_id"              : secrets.get("private_key_id",""),
+                "private_key"                 : secrets.get("private_key","").replace("\\n","\n"),
+                "client_email"                : secrets.get("client_email",""),
+                "client_id"                   : secrets.get("client_id",""),
+                "auth_uri"                    : secrets.get("auth_uri","https://accounts.google.com/o/oauth2/auth"),
+                "token_uri"                   : secrets.get("token_uri","https://oauth2.googleapis.com/token"),
+                "auth_provider_x509_cert_url" : "https://www.googleapis.com/oauth2/v1/certs",
+                "client_x509_cert_url"        : f"https://www.googleapis.com/robot/v1/metadata/x509/{secrets.get('client_email','').replace('@','%40')}",
+                "universe_domain"             : "googleapis.com"
+            }
+            creds  = Credentials.from_service_account_info(
+                creds_dict,
+                scopes=[
+                    "https://spreadsheets.google.com/feeds",
+                    "https://www.googleapis.com/auth/drive",
+                    "https://www.googleapis.com/auth/spreadsheets",
+                ]
+            )
+            client = gspread.Client(auth=creds)
+            client.login()
+            return client
+    except Exception as e:
+        st.warning(f"⚠️ Modo nube falló: {e}")
+
+    # ── Modo local: archivo JSON ──────────────────────
+    try:
+        if os.path.exists(CREDENTIALS_FILE):
+            return gspread.service_account(filename=CREDENTIALS_FILE)
+        else:
+            st.error("⚠️ No se encontraron credenciales. Configura los Secrets en Streamlit Cloud.")
+            return None
     except Exception as e:
         st.error(f"Error conectando Google Sheets: {e}")
         return None
