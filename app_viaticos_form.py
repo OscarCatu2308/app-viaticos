@@ -261,9 +261,55 @@ def extraer_combustible(item, ns):
     elif "premium" in t: tipo_c = "Premium"
     return tipo_c, round(galones, 4), round(precio, 4)
 
-@st.cache_data(show_spinner="Cargando documentos...")
+@st.cache_data(ttl=300, show_spinner="Cargando documentos...")
 def cargar_xmls():
+    """
+    Primero intenta leer documentos desde Google Sheets (hoja Documentos).
+    Si no encuentra, intenta leer XMLs locales como fallback.
+    """
     xmls = {}
+
+    # Modo nube/hibrido: leer desde Google Sheets
+    try:
+        client = conectar_sheets()
+        if client:
+            libro = client.open_by_key(SHEET_ID)
+            hojas = [h.title for h in libro.worksheets()]
+            if "Documentos" in hojas:
+                hoja_docs = libro.worksheet("Documentos")
+                registros = hoja_docs.get_all_records()
+                for r in registros:
+                    serie = str(r.get("Serie",""))
+                    if not serie:
+                        continue
+                    xmls[serie] = {
+                        "serie"        : serie,
+                        "correlativo"  : str(r.get("Correlativo","")),
+                        "referencia"   : str(r.get("Referencia","")),
+                        "fecha"        : str(r.get("Fecha","")),
+                        "hora"         : str(r.get("Hora","")),
+                        "nit"          : str(r.get("NIT","")),
+                        "emisor"       : str(r.get("Emisor","")),
+                        "direccion"    : str(r.get("Direccion","")),
+                        "municipio"    : str(r.get("Municipio","")),
+                        "departamento" : str(r.get("Departamento","")),
+                        "gran_total"   : float(r.get("MontoTotal",0) or 0),
+                        "monto_iva"    : float(r.get("MontoIVA",0) or 0),
+                        "monto_exento" : float(r.get("MontoExento",0) or 0),
+                        "iva_ded"      : str(r.get("IVADeducible","S")),
+                        "tipo_trans"   : str(r.get("TipoTransaccion","S")),
+                        "desc_corta"   : str(r.get("DescCorta","")),
+                        "es_combustible": str(r.get("EsCombustible","")) == "Si",
+                        "tipo_comb"    : str(r.get("TipoComb","")),
+                        "galones"      : float(r.get("Galones",0) or 0),
+                        "precio_galon" : float(r.get("PrecioGalon",0) or 0),
+                    }
+                if xmls:
+                    return xmls
+    except Exception:
+        pass
+
+    # Fallback: leer XMLs locales
     archivos = glob.glob(os.path.join(CARPETA_XML,"**","xml","**","*.xml"), recursive=True)
     if not archivos:
         archivos = glob.glob(os.path.join(CARPETA_XML,"**","*.xml"), recursive=True)
@@ -274,13 +320,11 @@ def cargar_xmls():
             root = tree.getroot()
             _, ns = find_ns(root, ".//dte:DatosGenerales")
             if ns is None: continue
-
             dg      = root.find(".//dte:DatosGenerales", ns)
             num_aut = root.find(".//dte:NumeroAutorizacion", ns)
             emisor  = root.find(".//dte:Emisor", ns)
             totales = root.find(".//dte:Totales", ns)
             if dg is None or num_aut is None: continue
-
             serie       = num_aut.get("Serie","")
             correlativo = num_aut.get("Numero","")
             tipo_dte    = dg.get("Tipo","FACT")
@@ -293,25 +337,21 @@ def cargar_xmls():
             except:
                 fecha = fecha_hora[:10]
                 hora  = fecha_hora[11:19] if len(fecha_hora) > 10 else ""
-
             nit_emisor = nom_emisor = dir_emisor = mun_emisor = dep_emisor = ""
             if emisor is not None:
                 nit_emisor = emisor.get("NITEmisor","") or emisor.get("Nit","")
                 nom_emisor = emisor.get("NombreEmisor","") or emisor.get("NombreComercial","")
                 dir_el = emisor.find("dte:DireccionEmisor", ns)
                 if dir_el is not None:
-                    d = dir_el.find("dte:Direccion",    ns)
-                    m = dir_el.find("dte:Municipio",    ns)
+                    d = dir_el.find("dte:Direccion",    ns); m = dir_el.find("dte:Municipio",    ns)
                     e = dir_el.find("dte:Departamento", ns)
                     dir_emisor = d.text if d is not None else ""
                     mun_emisor = m.text if m is not None else ""
                     dep_emisor = e.text if e is not None else ""
-
             gran_total = monto_iva = monto_exento = 0.0
             if totales is not None:
                 gt = totales.find("dte:GranTotal", ns)
-                if gt is not None and gt.text:
-                    gran_total = round(float(gt.text), 2)
+                if gt is not None and gt.text: gran_total = round(float(gt.text), 2)
                 for timp in totales.findall("dte:TotalImpuestos/dte:TotalImpuesto", ns):
                     nc_el = timp.find("dte:NombreCorto", ns)
                     nc    = nc_el.text if nc_el is not None else timp.get("NombreCorto","")
@@ -321,63 +361,36 @@ def cargar_xmls():
                             v  = tm.text if tm is not None else timp.get("TotalMontoImpuesto",0)
                             monto_iva = round(float(v), 2)
                         except: pass
-
             items   = root.findall(".//dte:Items/dte:Item", ns)
-            es_comb = False
-            tipo_comb = galones = precio_galon = 0.0
-            tipo_comb_str = ""
+            es_comb = False; tipo_comb_str = ""; galones = precio_galon = 0.0
             for item in items:
                 desc_el = item.find("dte:Descripcion", ns)
                 desc    = (desc_el.text or "") if desc_el is not None else ""
                 imps    = item.findall("dte:Impuestos/dte:Impuesto", ns)
                 for imp in imps:
-                    if "idp" in get_nc(imp, ns):
-                        es_comb = True; break
+                    if "idp" in get_nc(imp, ns): es_comb = True; break
                 if es_comb:
-                    tipo_comb_str, galones, precio_galon = extraer_combustible(item, ns)
-                    break
+                    tipo_comb_str, galones, precio_galon = extraer_combustible(item, ns); break
                 if any(p in desc.lower() for p in ["regular","super","diesel","premium","gasolina","combustible","galones"]):
                     es_comb = True
-                    tipo_comb_str, galones, precio_galon = extraer_combustible(item, ns)
-                    break
-
-            tipo_trans = "C" if es_comb else (
-                "M" if any(i.get("BienOServicio","B")=="B" for i in items) else "S"
-            )
-            iva_ded = "P" if tipo_dte in ["FPEQ","FESP"] else ("N" if monto_iva==0 else "S")
-
+                    tipo_comb_str, galones, precio_galon = extraer_combustible(item, ns); break
+            tipo_trans = "C" if es_comb else ("M" if any(i.get("BienOServicio","B")=="B" for i in items) else "S")
+            iva_ded    = "P" if tipo_dte in ["FPEQ","FESP"] else ("N" if monto_iva==0 else "S")
             desc_corta = ""
             if items:
                 de = items[0].find("dte:Descripcion", ns)
-                if de is not None and de.text:
-                    desc_corta = limpiar_desc(de.text)
-            if es_comb:
-                desc_corta = f"Combustible {tipo_comb_str}".strip()
-
+                if de is not None and de.text: desc_corta = limpiar_desc(de.text)
+            if es_comb: desc_corta = f"Combustible {tipo_comb_str}".strip()
             xmls[serie] = {
-                "serie"        : serie,
-                "correlativo"  : correlativo,
-                "referencia"   : f"{serie}-{correlativo}",
-                "fecha"        : fecha,
-                "hora"         : hora,
-                "nit"          : limpiar(nit_emisor),
-                "emisor"       : limpiar(nom_emisor),
-                "direccion"    : limpiar(dir_emisor),
-                "municipio"    : limpiar(mun_emisor),
-                "departamento" : limpiar(dep_emisor),
-                "gran_total"   : gran_total,
-                "monto_iva"    : monto_iva,
-                "monto_exento" : monto_exento,
-                "iva_ded"      : iva_ded,
-                "tipo_trans"   : tipo_trans,
-                "desc_corta"   : desc_corta,
-                "es_combustible": es_comb,
-                "tipo_comb"    : tipo_comb_str,
-                "galones"      : galones,
-                "precio_galon" : precio_galon,
+                "serie":serie,"correlativo":correlativo,"referencia":f"{serie}-{correlativo}",
+                "fecha":fecha,"hora":hora,"nit":limpiar(nit_emisor),"emisor":limpiar(nom_emisor),
+                "direccion":limpiar(dir_emisor),"municipio":limpiar(mun_emisor),
+                "departamento":limpiar(dep_emisor),"gran_total":gran_total,
+                "monto_iva":monto_iva,"monto_exento":monto_exento,"iva_ded":iva_ded,
+                "tipo_trans":tipo_trans,"desc_corta":desc_corta,"es_combustible":es_comb,
+                "tipo_comb":tipo_comb_str,"galones":galones,"precio_galon":precio_galon,
             }
         except: pass
-
     return xmls
 
 # ─────────────────────────────────────────────────────
