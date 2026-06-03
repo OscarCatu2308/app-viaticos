@@ -186,7 +186,7 @@ def obtener_hoja(client):
         if not hoja.cell(1, 1).value:
             hoja.append_row([
                 "Timestamp","Semana","CorreoEncuestador","TieneFact",
-                "Correlativo_Interno","Fecha","HoraEmision","Serie",
+                "Correlativo_Interno","Referencia","Fecha","HoraEmision","Serie",
                 "Correlativo","Referencia","NombreEmisor","NIT",
                 "Departamento","Municipio","Direccion",
                 "MontoTotal","MontoIVA","MontoExento","IVADeducible",
@@ -209,7 +209,7 @@ def ya_liquidado(hoja, serie, correlativo):
             # Verificar por referencia (campo combinado)
             match_ref   = str(r.get("Referencia","")) == referencia
             # Verificar por Correlativo_Interno que contiene la referencia
-            match_int   = str(r.get("Correlativo_Interno","")) == referencia
+            match_int   = str(r.get("Correlativo_Interno","") or r.get("Referencia","")) == referencia
 
             if match_serie or match_ref or match_int:
                 return True, r.get("CorreoEncuestador","")
@@ -218,30 +218,26 @@ def ya_liquidado(hoja, serie, correlativo):
     return False, ""
 
 def siguiente_gsf(hoja):
-    """
-    Genera correlativo GSF unico.
-    Busca el maximo existente en Google Sheets y suma 1.
-    Agrega sufijo de timestamp para evitar colisiones simultaneas.
-    """
+    """GSF-001, GSF-002 secuencial — busca en Referencia y Correlativo_Interno"""
     try:
         registros = hoja.get_all_records()
         nums = []
         for r in registros:
-            ci = str(r.get("Correlativo_Interno",""))
-            if ci.startswith("GSF-"):
-                try:
-                    # Tomar solo la parte numerica (primeros digitos despues de GSF-)
-                    parte = ci.split("-")[1]
-                    nums.append(int(''.join(filter(str.isdigit, parte))))
-                except:
-                    pass
-        return f"GSF-{(max(nums)+1 if nums else 1):03d}"
+            for campo in ["Correlativo_Interno", "Referencia"]:
+                val = str(r.get(campo, "") or "")
+                if val.upper().startswith("GSF-"):
+                    try:
+                        parte = val[4:].split("-")[0]
+                        n = int("".join(c for c in parte if c.isdigit()))
+                        if n > 0:
+                            nums.append(n)
+                    except:
+                        pass
+        siguiente = max(nums) + 1 if nums else 1
+        return f"GSF-{siguiente:03d}"
     except:
         return "GSF-001"
 
-# ─────────────────────────────────────────────────────
-# PARSEAR XMLs
-# ─────────────────────────────────────────────────────
 def limpiar(valor):
     if not valor: return ""
     texto = unicodedata.normalize("NFD", str(valor))
@@ -668,7 +664,7 @@ def generar_reporte_excel(correo, semana, registros):
         tipo_d   = r.get("ClasificacionGasto","")
         monto_d  = float(r.get("MontoTotal",0) or 0)
         fact_d   = r.get("TieneFact","Sí")
-        corr_d   = r.get("Correlativo_Interno","") or r.get("Referencia","")
+        corr_d   = r.get("Correlativo_Interno","") or r.get("Referencia","") or r.get("Referencia","")
 
         fill_di = gris_alt if di % 2 == 0 else None
 
@@ -857,7 +853,7 @@ def generar_reporte_pdf(correo, semana, registros, total_gral, totales_col):
     obs_pdf = []
     for r in registros:
         if str(r.get("TieneFact","Sí")) == "No":
-            ci   = r.get("Correlativo_Interno","")
+            ci   = r.get("Correlativo_Interno","") or r.get("Referencia","")
             cat  = r.get("ClasificacionGasto","")
             desc = r.get("DescripcionCorta","")
             mto  = float(r.get("MontoTotal",0) or 0)
@@ -915,7 +911,7 @@ def generar_reporte_pdf(correo, semana, registros, total_gral, totales_col):
             y_cur = 15
         fecha_d  = r.get("Fecha","")
         fact_d   = r.get("TieneFact","Sí")
-        corr_d   = r.get("Correlativo_Interno","") or r.get("Referencia","")
+        corr_d   = r.get("Correlativo_Interno","") or r.get("Referencia","") or r.get("Referencia","")
         ref_d    = corr_d if fact_d=="No" else r.get("Referencia","")
         desc_d2 = str(r.get("DescripcionCorta","") or "").strip()
         emisor_d = (desc_d2 if desc_d2 else r.get("NombreEmisor",""))[:40]
